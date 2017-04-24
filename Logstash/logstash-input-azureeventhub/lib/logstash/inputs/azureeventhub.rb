@@ -15,22 +15,22 @@ class LogStash::Inputs::Azureeventhub < LogStash::Inputs::Base
   milestone 1
 
   default :codec, "json"
-  
+
   config :key, :validate => :string
   config :username, :validate => :string
   config :namespace, :validate => :string
   config :domain, :validate => :string, :default => "servicebus.windows.net"
   config :port, :validate => :number, :default => 5671
   config :receive_credits, :validate => :number, :default => 1000
-  
+
   config :eventhub, :validate => :string
   config :partitions, :validate => :number
   config :consumer_group, :validate => :string, :default => "$default"
-  
+
   config :time_since_epoch_millis, :validate => :number, :default => Time.now.utc.to_i * 1000
   config :thread_wait_sec, :validate => :number, :default => 5
-  
-  
+
+
   def initialize(*args)
     super(*args)
   end # def initialize
@@ -48,7 +48,7 @@ class LogStash::Inputs::Azureeventhub < LogStash::Inputs::Base
     end
     return nil
   end
-  
+
   def process(output_queue, receiver, partition)
     while !stop?
       begin
@@ -64,15 +64,18 @@ class LogStash::Inputs::Azureeventhub < LogStash::Inputs::Base
           sleep(@thread_wait_sec)
         end
       rescue LogStash::ShutdownSignal => e
+        @logger.error("  " + partition.to_s.rjust(2,"0") + " --- " + "Received shutdown signal.", :exception => e)
         raise e
       rescue org::apache::qpid::amqp_1_0::client::ConnectionErrorException => e
         raise e
-      rescue => e
-        @logger.error("  " + partition.to_s.rjust(2,"0") + " --- " + "Oh My, An error occurred.", :exception => e)
       end
     end # process
+  rescue => e
+    @logger.error("  " + partition.to_s.rjust(2,"0") + " --- " + "Unknown Error: Oh My, An error occurred.", :exception => e)
+  ensure
+    process_partition(output_queue, partition)
   end # process
-  
+
   def process_partition(output_queue, partition)
     while !stop?
       begin
@@ -89,11 +92,15 @@ class LogStash::Inputs::Azureeventhub < LogStash::Inputs::Base
       rescue org::apache::qpid::amqp_1_0::client::ConnectionErrorException => e
         @logger.debug("  " + partition.to_s.rjust(2,"0") + " --- " + "resetting connection")
         @time_since_epoch_millis = Time.now.utc.to_i * 1000
+        next
+      rescue LogStash::ShutdownSignal => e
+        receiver.close()
+        raise e
+        @logger.error("  " + partition.to_s.rjust(2,"0") + " --- Logstash trying to shutdown", :exception => e)
+        @time_since_epoch_millis = Time.now.utc.to_i * 1000
+        next
       end
     end
-  rescue LogStash::ShutdownSignal => e
-    receiver.close()
-    raise e
   rescue => e
     @logger.error("  " + partition.to_s.rjust(2,"0") + " --- Oh My, An error occurred.", :exception => e)
   end # process
@@ -133,19 +140,19 @@ class SelectorFilterWriter < org::apache::qpid::amqp_1_0::codec::AbstractDescrib
   def initialize(registry)
     super(registry)
   end
-  
+
   def onSetValue(value)
     @value = value
   end
-  
+
   def clear
     @value = nil
   end
-  
+
   def getDescriptor
     return org::apache::qpid::amqp_1_0::type::UnsignedLong.valueOf(83483426826);
   end
-  
+
   def createDescribedWriter
     return getRegistry().getValueWriter(@value.getValue());
   end
